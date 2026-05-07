@@ -1,0 +1,27 @@
+# Unity asset files are binary; treat as such so git diff doesn't try to parse them.
+*.unity binary
+*.prefab binary
+*.asset binary
+*.mat binary
+*.anim binary
+*.controller binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.fbx binary
+*.obj binary
+*.tga binary
+*.psd binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
+*.dll binary
+*.so binary
+*.aar binary
+
+# Always normalise line endings on text files
+* text=auto
+*.cs text eol=crlf
+*.shader text eol=crlf
+*.cginc text eol=crlf
+*.compute text eol=crlf

@@ -1,0 +1,72 @@
+# ============================================================
+# Unity (official template, trimmed)
+# ============================================================
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+
+# Unity Android gradle/cmake intermediate output
+.utmp/
+.gradle/
+
+# Local Claude Code settings
+.claude/
+
+# Unity asset meta data is OK to commit (we want to keep .meta files).
+# But these specific autogen patterns should not be committed.
+sysinfo.txt
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# Unity build cache (huge, regenerated on Build)
+*_BackUpThisFolder_ButDontShipItWithYourGame/
+*_BurstDebugInformation_DoNotShip/
+
+# Builds (your test1.apk and other player builds)
+*.apk
+*.aab
+*.unitypackage
+*.app
+
+# Visual Studio / Rider / VSCode
+.vs/
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============================================================
+# Python server (Assets/Server)
+# ============================================================
+Server/.venv/
+Server/.hf_cache/
+Server/frame_dumps/
+Server/__pycache__/
+Server/*.pyc
+Server/*.pyo
+
+# ============================================================
+# Misc
+# ============================================================
+# Recovery copies Unity makes when scenes get corrupted
+Assets/_Recovery/
