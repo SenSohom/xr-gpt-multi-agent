@@ -362,6 +362,7 @@ async def vlm_ask(req: VlmAskRequest):
             trace=[
                 {
                     "agent": r.agent,
+                    "stage": r.stage,
                     "latency_ms": r.latency_ms,
                     "error": r.error,
                 }

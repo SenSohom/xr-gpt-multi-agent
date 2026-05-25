@@ -21,6 +21,7 @@ class AgentSpec:
 @dataclass
 class AgentResult:
     agent: str
+    stage: str
     answer: str
     latency_ms: float
     error: str = ""
@@ -110,20 +111,32 @@ AGENTS: Dict[str, AgentSpec] = {
         max_sentences=1,
         max_words=28,
     ),
+    "synthesizer": AgentSpec(
+        name="synthesizer",
+        role_prompt=(
+            "You are the synthesis agent for a mixed-reality HUD. Merge the "
+            "agent observations into one final answer that directly satisfies "
+            "the user's request. Keep it concise and do not mention agents."
+        ),
+        max_new_tokens=72,
+        max_sentences=2,
+        max_words=48,
+    ),
 }
 
 
-# Agent communication matrix. Values are downstream agents that may be called
-# after the key agent has produced its result.
+# Agent communication matrix. Values are peer agents that should be consulted
+# after the primary agent has produced its first-pass answer.
 COMMUNICATION_MATRIX: Dict[str, List[str]] = {
     "describe": [],
-    "detail": ["critic"],
-    "usage": ["critic"],
-    "mechanism": ["critic"],
-    "safety": ["critic"],
-    "compare": ["critic"],
-    "chat": ["critic"],
+    "detail": ["describe", "usage", "safety"],
+    "usage": ["describe", "safety"],
+    "mechanism": ["describe", "safety"],
+    "safety": [],
+    "compare": ["describe", "detail"],
+    "chat": ["describe", "safety", "usage"],
     "critic": [],
+    "synthesizer": [],
 }
 
 
@@ -241,46 +254,112 @@ class AgentRouter:
         enable_critic: bool = False,
     ) -> Tuple[str, List[AgentResult]]:
         primary_agent = self._select_agent(task, prompt)
-        sequence = [primary_agent]
-        if enable_critic:
-            sequence.extend(COMMUNICATION_MATRIX.get(primary_agent, []))
-
         results: List[AgentResult] = []
-        current_prompt = self._build_agent_prompt(
-            AGENTS[primary_agent],
-            label,
-            prompt,
-            previous_answer="",
+
+        primary_answer = self._run_agent(
+            agent_name=primary_agent,
+            stage="primary",
+            image=image,
+            label=label,
+            user_prompt=prompt,
+            max_new_tokens=max_new_tokens,
+            results=results,
         )
 
-        answer = ""
-        for agent_name in sequence:
-            spec = AGENTS[agent_name]
-            if agent_name == "critic":
-                current_prompt = self._build_agent_prompt(
-                    spec,
-                    label,
-                    prompt,
-                    previous_answer=answer,
-                )
+        peer_answers: List[AgentResult] = []
+        for peer_agent in self._peer_agents_for(primary_agent):
+            peer_answer = self._run_agent(
+                agent_name=peer_agent,
+                stage="peer",
+                image=image,
+                label=label,
+                user_prompt=prompt,
+                max_new_tokens=max_new_tokens,
+                results=results,
+                previous_answer=primary_answer,
+            )
+            peer_answers.append(results[-1])
 
-            t0 = time.perf_counter()
-            try:
-                raw_answer = self.engine_factory().answer(
-                    image,
-                    current_prompt,
-                    min(max_new_tokens, spec.max_new_tokens),
-                )
-                latency_ms = (time.perf_counter() - t0) * 1000.0
-                answer = self._sanitize_answer(raw_answer, spec)
-                results.append(AgentResult(agent_name, answer, latency_ms))
-            except Exception as e:
-                latency_ms = (time.perf_counter() - t0) * 1000.0
-                log.exception("VLM agent '%s' failed", agent_name)
-                results.append(AgentResult(agent_name, "", latency_ms, str(e)))
-                raise
+        answer = primary_answer
+        if peer_answers:
+            answer = self._run_agent(
+                agent_name="synthesizer",
+                stage="synthesis",
+                image=image,
+                label=label,
+                user_prompt=prompt,
+                max_new_tokens=max_new_tokens,
+                results=results,
+                previous_answer=primary_answer,
+                peer_answers=[results[0], *peer_answers],
+            )
+
+        if enable_critic:
+            answer = self._run_agent(
+                agent_name="critic",
+                stage="critic",
+                image=image,
+                label=label,
+                user_prompt=prompt,
+                max_new_tokens=max_new_tokens,
+                results=results,
+                previous_answer=answer,
+                peer_answers=results,
+            )
 
         return answer, results
+
+    def _run_agent(
+        self,
+        agent_name: str,
+        stage: str,
+        image: Image.Image,
+        label: str,
+        user_prompt: str,
+        max_new_tokens: int,
+        results: List[AgentResult],
+        previous_answer: str = "",
+        peer_answers: List[AgentResult] | None = None,
+    ) -> str:
+        spec = AGENTS[agent_name]
+        current_prompt = self._build_agent_prompt(
+            spec,
+            label,
+            user_prompt,
+            previous_answer=previous_answer,
+            peer_answers=peer_answers,
+        )
+
+        t0 = time.perf_counter()
+        try:
+            raw_answer = self.engine_factory().answer(
+                image,
+                current_prompt,
+                min(max_new_tokens, spec.max_new_tokens),
+            )
+            latency_ms = (time.perf_counter() - t0) * 1000.0
+            answer = self._sanitize_answer(raw_answer, spec)
+            results.append(AgentResult(agent_name, stage, answer, latency_ms))
+            return answer
+        except Exception as e:
+            latency_ms = (time.perf_counter() - t0) * 1000.0
+            log.exception("VLM agent '%s' failed", agent_name)
+            results.append(AgentResult(agent_name, stage, "", latency_ms, str(e)))
+            raise
+
+    @staticmethod
+    def _peer_agents_for(primary_agent: str) -> List[str]:
+        seen = {primary_agent}
+        peers: List[str] = []
+        for agent_name in COMMUNICATION_MATRIX.get(primary_agent, []):
+            if agent_name in seen:
+                continue
+            if agent_name not in AGENTS:
+                log.warning("Unknown agent '%s' in communication matrix", agent_name)
+                continue
+            peers.append(agent_name)
+            seen.add(agent_name)
+        return peers
 
     @staticmethod
     def _select_agent(task: str, prompt: str) -> str:
@@ -309,12 +388,18 @@ class AgentRouter:
         label: str,
         user_prompt: str,
         previous_answer: str,
+        peer_answers: List[AgentResult] | None = None,
     ) -> str:
         parts = [spec.role_prompt]
         if label:
             parts.append(f"Detected label hint: {label}.")
         if previous_answer:
             parts.append(f"Previous agent answer: {previous_answer}")
+        if peer_answers:
+            parts.append("Agent observations:")
+            for result in peer_answers:
+                if result.answer:
+                    parts.append(f"- {result.agent}: {result.answer}")
         parts.append(f"User request: {user_prompt}")
         parts.append(
             f"Output limit: {spec.max_sentences} sentence(s), {spec.max_words} words max."
