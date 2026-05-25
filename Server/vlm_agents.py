@@ -116,7 +116,10 @@ AGENTS: Dict[str, AgentSpec] = {
         role_prompt=(
             "You are the synthesis agent for a mixed-reality HUD. Merge the "
             "agent observations into one final answer that directly satisfies "
-            "the user's request. Keep it concise and do not mention agents."
+            "the user's request. Keep it concise and do not mention agents. "
+            "Do not invent warnings, labels, text, or features that are not "
+            "clearly supported by the agent observations. Include safety only "
+            "when the user asked for safety or a concrete visible hazard was found."
         ),
         max_new_tokens=72,
         max_sentences=2,
@@ -129,12 +132,12 @@ AGENTS: Dict[str, AgentSpec] = {
 # after the primary agent has produced its first-pass answer.
 COMMUNICATION_MATRIX: Dict[str, List[str]] = {
     "describe": [],
-    "detail": ["describe", "usage", "safety"],
+    "detail": ["describe", "usage"],
     "usage": ["describe", "safety"],
-    "mechanism": ["describe", "safety"],
+    "mechanism": ["describe"],
     "safety": [],
     "compare": ["describe", "detail"],
-    "chat": ["describe", "safety", "usage"],
+    "chat": ["describe", "usage"],
     "critic": [],
     "synthesizer": [],
 }
