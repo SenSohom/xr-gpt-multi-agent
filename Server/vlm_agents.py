@@ -1,8 +1,7 @@
 import logging
-import os
 import time
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Tuple
 
 from PIL import Image
 
@@ -207,37 +206,6 @@ class FastVlmEngine(VlmEngine):
         return text.strip()
 
 
-class MoondreamEngine(VlmEngine):
-    model_id = "vikhyatk/moondream2"
-
-    def __init__(self, torch_module, device: str):
-        self.torch = torch_module
-        self.device = device
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-
-        log.info("Loading moondream2 model (%s) ...", self.model_id)
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            self.model_id,
-            trust_remote_code=True,
-        )
-        self.model = AutoModelForCausalLM.from_pretrained(
-            self.model_id,
-            trust_remote_code=True,
-            torch_dtype=(
-                torch_module.float16 if device == "cuda" else torch_module.float32
-            ),
-        ).to(device)
-        self.model.eval()
-        log.info("moondream2 loaded.")
-
-    def answer(self, image: Image.Image, prompt: str, max_new_tokens: int) -> str:
-        del max_new_tokens
-        with self.torch.no_grad():
-            enc = self.model.encode_image(image)
-            ans = self.model.answer_question(enc, prompt, self.tokenizer)
-        return ans.strip()
-
-
 class AgentRouter:
     def __init__(self, engine_factory: Callable[[], VlmEngine]):
         self.engine_factory = engine_factory
@@ -328,8 +296,3 @@ class AgentRouter:
             parts.append(f"Previous agent answer: {previous_answer}")
         parts.append(f"User request: {user_prompt}")
         return "\n".join(parts)
-
-
-def desired_backend() -> str:
-    return os.environ.get("VRXR_VLM_BACKEND", "fastvlm").strip().lower()
-

@@ -32,8 +32,6 @@ The first `start.bat` run downloads:
 
 * `yolov8n.pt` (~6 MB) - via ultralytics
 * `apple/FastVLM-0.5B` - via Hugging Face, used by the multi-agent VLM router.
-  Set `VRXR_VLM_BACKEND=moondream` before launching if you need the old
-  centralized `vikhyatk/moondream2` backend.
 
 ## Running
 

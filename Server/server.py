@@ -11,8 +11,7 @@ Design notes:
     asyncio loop; we only ever keep the LATEST received frame (drop-old) so a slow
     inference never causes queue buildup. Quest also enforces single-frame in-flight
     on its side, so this is belt-and-suspenders.
-  * VLM defaults to apple/FastVLM-0.5B and is wrapped by a logical multi-agent
-    router. Set VRXR_VLM_BACKEND=moondream to use the old centralized path.
+  * VLM uses apple/FastVLM-0.5B and is wrapped by a logical multi-agent router.
   * VLM is only triggered by user interaction (Open / More Info / Chat), so it
     never competes with YOLO unless explicitly requested.
   * Both YOLO model and VLM backend are loaded once globally. They move to CUDA
@@ -37,8 +36,6 @@ from pydantic import BaseModel, Field
 from vlm_agents import (
     AgentRouter,
     FastVlmEngine,
-    MoondreamEngine,
-    desired_backend,
 )
 
 # Lazy model holders - imported when needed so server can start fast.
@@ -96,20 +93,11 @@ def get_yolo():
 
 
 def get_vlm_engine():
-    """Load the configured VLM backend once."""
+    """Load FastVLM once."""
     global _vlm_engine
     if _vlm_engine is None:
         _ensure_torch()
-        backend = desired_backend()
-        if backend == "moondream":
-            _vlm_engine = MoondreamEngine(_torch, _device)
-        elif backend == "fastvlm":
-            _vlm_engine = FastVlmEngine(_torch)
-        else:
-            raise RuntimeError(
-                f"Unsupported VRXR_VLM_BACKEND='{backend}'. "
-                "Use 'fastvlm' or 'moondream'."
-            )
+        _vlm_engine = FastVlmEngine(_torch)
     return _vlm_engine
 
 
@@ -130,7 +118,7 @@ def healthz():
         "ok": True,
         "device": _device if _torch is not None else "unloaded",
         "yolo_loaded": _yolo_model is not None,
-        "vlm_backend": desired_backend(),
+        "vlm_backend": "fastvlm",
         "vlm_loaded": _vlm_engine is not None,
     }
 
@@ -369,7 +357,7 @@ async def vlm_ask(req: VlmAskRequest):
         return VlmAskResponse(
             answer=answer.strip(),
             latency_ms=latency_ms,
-            backend=desired_backend(),
+            backend="fastvlm",
             agent=primary_agent,
             trace=[
                 {
@@ -385,7 +373,7 @@ async def vlm_ask(req: VlmAskRequest):
         return VlmAskResponse(
             error=str(e),
             latency_ms=(time.perf_counter() - t0) * 1000.0,
-            backend=desired_backend(),
+            backend="fastvlm",
         )
 
 
@@ -485,7 +473,7 @@ if __name__ == "__main__":
     parser.add_argument("--preload-yolo", action="store_true",
                         help="Eagerly load YOLO weights on startup")
     parser.add_argument("--preload-vlm", action="store_true",
-                        help="Eagerly load the configured VLM backend on startup")
+                        help="Eagerly load FastVLM on startup")
     args = parser.parse_args()
 
     if args.preload_yolo:

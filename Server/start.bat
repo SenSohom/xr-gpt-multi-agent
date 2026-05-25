@@ -25,8 +25,8 @@ if not exist ".venv\Scripts\python.exe" (
 
 call ".venv\Scripts\activate.bat"
 
-REM Pin HuggingFace cache to a fixed folder INSIDE the Server directory so the
-REM 3.5 GB moondream2 weights are downloaded ONCE and reused forever — no matter
+REM Pin HuggingFace cache to a fixed folder INSIDE the Server directory so model
+REM weights are downloaded ONCE and reused forever - no matter
 REM what %USERPROFILE% looks like or which terminal launches this script.
 set "HF_HOME=%~dp0.hf_cache"
 set "HF_HUB_CACHE=%~dp0.hf_cache\hub"
@@ -37,13 +37,9 @@ set "HF_HUB_OFFLINE=0"
 set "TRANSFORMERS_OFFLINE=0"
 if not exist "%HF_HOME%" mkdir "%HF_HOME%"
 
-REM Preload BOTH YOLO and VLM. moondream2 is ~3.5 GB on first download;
-REM if we don't preload, the very first /vlm/ask call will hang for minutes
+REM Preload BOTH YOLO and VLM. If we don't preload, the first /vlm/ask call can
+REM hang for minutes on first download
 REM while transformers downloads weights, which makes the Quest UI look frozen.
-REM VLM backend: fastvlm is the new default. Set VRXR_VLM_BACKEND=moondream
-REM before launching if you need the old centralized model path.
-if "%VRXR_VLM_BACKEND%"=="" set "VRXR_VLM_BACKEND=fastvlm"
-
 python server.py --host 0.0.0.0 --port 8766 --preload-yolo --preload-vlm %*
 
 REM Pause on crash so the user can read the traceback instead of the window vanishing.

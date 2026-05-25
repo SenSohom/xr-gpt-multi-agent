@@ -5,7 +5,7 @@ using UnityEngine;
 using UnityEngine.Networking;
 
 /// <summary>
-/// HTTP 客户端,把 image + prompt 发到本地 Python 服务器(moondream2 后端),返回文本。
+/// HTTP 客户端,把 image + prompt 发到本地 Python 服务器(VLM agent 后端),返回文本。
 /// 仅在用户交互(Open / More Info / Chat)时调用,跟 YOLO 流完全解耦。
 /// </summary>
 public class VlmClient : MonoBehaviour
@@ -14,7 +14,7 @@ public class VlmClient : MonoBehaviour
     [Tooltip("Python 服务器地址。运行时会被 Assets/Resources/NetworkConfig.asset 覆盖；这里只是兜底默认值。")]
     public string serverBaseUrl = "http://192.168.1.182:8766";
 
-    [Tooltip("超时秒数。moondream2 首次冷启动可能要几十秒，CPU 推理一次也要 5~15s。给到 90s。")]
+    [Tooltip("超时秒数。FastVLM 首次冷启动可能要几十秒，CPU 推理一次也要 5~15s。给到 90s。")]
     public int timeoutSeconds = 90;
 
     [Header("Default Prompts")]
