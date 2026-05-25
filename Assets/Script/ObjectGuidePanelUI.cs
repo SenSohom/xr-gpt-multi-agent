@@ -207,7 +207,7 @@ public class ObjectGuidePanelUI : MonoBehaviour
         if (vlmClient != null && frozenSnapshot != null)
         {
             var captured = currentData;
-            vlmClient.Ask(frozenSnapshot, captured.label, vlmClient.promptMoreInfo, (answer, ok) =>
+            vlmClient.AskAgent(frozenSnapshot, captured.label, vlmClient.promptMoreInfo, "more_info", true, (answer, ok) =>
             {
                 if (currentData != captured) return; // 用户已切换选中
                 if (ok)
@@ -260,7 +260,7 @@ public class ObjectGuidePanelUI : MonoBehaviour
         if (vlmClient != null && frozenSnapshot != null)
         {
             var captured = currentData;
-            vlmClient.Ask(frozenSnapshot, captured.label, vlmClient.promptAskIntro, (answer, ok) =>
+            vlmClient.AskAgent(frozenSnapshot, captured.label, vlmClient.promptAskIntro, "intro", false, (answer, ok) =>
             {
                 if (currentData != captured) return;
                 if (ok && chatAnswerText != null) chatAnswerText.text = answer;
@@ -284,7 +284,7 @@ public class ObjectGuidePanelUI : MonoBehaviour
         {
             var captured = currentData;
             string prompt = getPrompt(vlmClient);
-            vlmClient.Ask(frozenSnapshot, captured.label, prompt, (answer, ok) =>
+            vlmClient.AskAgent(frozenSnapshot, captured.label, prompt, InferAgentTask(prompt), true, (answer, ok) =>
             {
                 if (currentData != captured) return;
                 if (chatAnswerText != null)
@@ -295,5 +295,16 @@ public class ObjectGuidePanelUI : MonoBehaviour
         {
             chatAnswerText.text = fallback ?? "AI server unavailable. Make sure the server is running.";
         }
+    }
+
+    private static string InferAgentTask(string prompt)
+    {
+        if (string.IsNullOrEmpty(prompt)) return "chat";
+        string p = prompt.ToLowerInvariant();
+        if (p.Contains("safety") || p.Contains("warning") || p.Contains("precaution")) return "safety";
+        if (p.Contains("use") || p.Contains("steps") || p.Contains("tips")) return "use";
+        if (p.Contains("works") || p.Contains("function") || p.Contains("why")) return "why";
+        if (p.Contains("compare") || p.Contains("similar") || p.Contains("fact")) return "compare";
+        return "chat";
     }
 }

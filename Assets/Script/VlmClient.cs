@@ -52,6 +52,8 @@ public class VlmClient : MonoBehaviour
         public string label;
         public string prompt;
         public int max_new_tokens = 96;
+        public string agent_task;
+        public bool enable_critic;
     }
 
     [Serializable]
@@ -60,12 +62,25 @@ public class VlmClient : MonoBehaviour
         public string answer;
         public float latency_ms;
         public string error;
+        public string backend;
+        public string agent;
     }
 
     /// <summary>
     /// 异步请求 VLM,完成时回调 onDone(answer)。失败时 answer 是错误消息。
     /// </summary>
     public Coroutine Ask(Texture2D snapshot, string label, string prompt, Action<string, bool> onDone)
+    {
+        return AskAgent(snapshot, label, prompt, "", false, onDone);
+    }
+
+    public Coroutine AskAgent(
+        Texture2D snapshot,
+        string label,
+        string prompt,
+        string agentTask,
+        bool enableCritic,
+        Action<string, bool> onDone)
     {
         if (snapshot == null)
         {
@@ -78,10 +93,16 @@ public class VlmClient : MonoBehaviour
             return null;
         }
 
-        return StartCoroutine(AskRoutine(snapshot, label, prompt, onDone));
+        return StartCoroutine(AskRoutine(snapshot, label, prompt, agentTask, enableCritic, onDone));
     }
 
-    private IEnumerator AskRoutine(Texture2D snapshot, string label, string prompt, Action<string, bool> onDone)
+    private IEnumerator AskRoutine(
+        Texture2D snapshot,
+        string label,
+        string prompt,
+        string agentTask,
+        bool enableCritic,
+        Action<string, bool> onDone)
     {
         byte[] jpeg = SnapshotCapture.EncodeToJpeg(snapshot, 80);
         if (jpeg == null || jpeg.Length == 0)
@@ -96,7 +117,9 @@ public class VlmClient : MonoBehaviour
         {
             image_b64 = b64,
             label = label ?? "",
-            prompt = prompt
+            prompt = prompt,
+            agent_task = agentTask ?? "",
+            enable_critic = enableCritic
         };
 
         string json = JsonUtility.ToJson(req);
@@ -112,7 +135,7 @@ public class VlmClient : MonoBehaviour
             www.timeout = timeoutSeconds;
 
             if (logRequests)
-                Debug.Log($"[VlmClient] POST {url} label={label} jpegBytes={jpeg.Length}");
+                Debug.Log($"[VlmClient] POST {url} label={label} agent={agentTask} critic={enableCritic} jpegBytes={jpeg.Length}");
 
             yield return www.SendWebRequest();
 
@@ -151,7 +174,7 @@ public class VlmClient : MonoBehaviour
             }
 
             if (logRequests)
-                Debug.Log($"[VlmClient] answer={resp.answer} latency={resp.latency_ms:F0}ms");
+                Debug.Log($"[VlmClient] backend={resp.backend} agent={resp.agent} answer={resp.answer} latency={resp.latency_ms:F0}ms");
 
             onDone?.Invoke(resp.answer ?? "", true);
         }

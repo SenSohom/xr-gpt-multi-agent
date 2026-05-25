@@ -3,7 +3,7 @@ Unified Python server for the VR-XR HUD project.
 
 Endpoints:
   WebSocket  /yolo       - Quest pushes binary frames; server pushes JSON detections.
-  HTTP POST  /vlm/ask    - {image_b64, label, prompt} -> {answer, latency_ms}.
+  HTTP POST  /vlm/ask    - {image_b64, label, prompt, agent_task} -> {answer, latency_ms}.
   HTTP GET   /healthz    - basic liveness.
 
 Design notes:
@@ -11,10 +11,12 @@ Design notes:
     asyncio loop; we only ever keep the LATEST received frame (drop-old) so a slow
     inference never causes queue buildup. Quest also enforces single-frame in-flight
     on its side, so this is belt-and-suspenders.
-  * VLM (moondream2 3B) is loaded lazily on first /vlm/ask. It's only triggered by
-    user interaction (Open / More Info / Chat) so it never competes with YOLO.
-  * Both YOLO model and VLM model are loaded once globally. Both move to CUDA if
-    available, otherwise CPU.
+  * VLM defaults to apple/FastVLM-0.5B and is wrapped by a logical multi-agent
+    router. Set VRXR_VLM_BACKEND=moondream to use the old centralized path.
+  * VLM is only triggered by user interaction (Open / More Info / Chat), so it
+    never competes with YOLO unless explicitly requested.
+  * Both YOLO model and VLM backend are loaded once globally. They move to CUDA
+    if available, otherwise CPU.
 """
 
 import asyncio
@@ -30,12 +32,19 @@ from PIL import Image
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from vlm_agents import (
+    AgentRouter,
+    FastVlmEngine,
+    MoondreamEngine,
+    desired_backend,
+)
 
 # Lazy model holders - imported when needed so server can start fast.
 _yolo_model = None
-_vlm_model = None
-_vlm_tokenizer = None
+_vlm_engine = None
+_vlm_router = None
 _torch = None
 _device = "cpu"
 
@@ -86,23 +95,30 @@ def get_yolo():
     return _yolo_model
 
 
-def get_vlm():
-    """Load moondream2 (~3B) once. Pulls from HuggingFace on first call."""
-    global _vlm_model, _vlm_tokenizer
-    if _vlm_model is None:
+def get_vlm_engine():
+    """Load the configured VLM backend once."""
+    global _vlm_engine
+    if _vlm_engine is None:
         _ensure_torch()
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-        model_id = "vikhyatk/moondream2"
-        log.info(f"Loading VLM ({model_id}) ... this can take a while on first run")
-        _vlm_tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-        _vlm_model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            trust_remote_code=True,
-            torch_dtype=_torch.float16 if _device == "cuda" else _torch.float32,
-        ).to(_device)
-        _vlm_model.eval()
-        log.info("VLM loaded.")
-    return _vlm_model, _vlm_tokenizer
+        backend = desired_backend()
+        if backend == "moondream":
+            _vlm_engine = MoondreamEngine(_torch, _device)
+        elif backend == "fastvlm":
+            _vlm_engine = FastVlmEngine(_torch)
+        else:
+            raise RuntimeError(
+                f"Unsupported VRXR_VLM_BACKEND='{backend}'. "
+                "Use 'fastvlm' or 'moondream'."
+            )
+    return _vlm_engine
+
+
+def get_vlm_router():
+    """Create the logical multi-agent router over the configured VLM backend."""
+    global _vlm_router
+    if _vlm_router is None:
+        _vlm_router = AgentRouter(get_vlm_engine)
+    return _vlm_router
 
 
 # ----------------------------------------------------------------
@@ -114,7 +130,8 @@ def healthz():
         "ok": True,
         "device": _device if _torch is not None else "unloaded",
         "yolo_loaded": _yolo_model is not None,
-        "vlm_loaded": _vlm_model is not None,
+        "vlm_backend": desired_backend(),
+        "vlm_loaded": _vlm_engine is not None,
     }
 
 
@@ -305,12 +322,17 @@ class VlmAskRequest(BaseModel):
     label: str = ""
     prompt: str
     max_new_tokens: int = 96
+    agent_task: str = ""
+    enable_critic: bool = False
 
 
 class VlmAskResponse(BaseModel):
     answer: str = ""
     latency_ms: float = 0.0
     error: str = ""
+    backend: str = ""
+    agent: str = ""
+    trace: List[dict] = Field(default_factory=list)
 
 
 @app.post("/vlm/ask", response_model=VlmAskResponse)
@@ -326,29 +348,45 @@ async def vlm_ask(req: VlmAskRequest):
     except Exception as e:
         return VlmAskResponse(error=f"image decode failed: {e}")
 
-    # Inject the YOLO label as a soft hint to anchor the model.
-    full_prompt = req.prompt
-    if req.label:
-        full_prompt = f"(The object in the image was detected as: {req.label}.)\n{req.prompt}"
-
     t0 = time.perf_counter()
     try:
-        # moondream2 is loaded lazily; first call may take a while.
-        model, tokenizer = get_vlm()
+        router = get_vlm_router()
 
-        # Run blocking VLM in a thread so the event loop isn't stalled.
+        # Run blocking VLM work in a thread so the event loop isn't stalled.
         def _infer():
-            with _torch.no_grad():
-                enc = model.encode_image(img)
-                ans = model.answer_question(enc, full_prompt, tokenizer)
-            return ans
+            return router.ask(
+                image=img,
+                label=req.label,
+                prompt=req.prompt,
+                task=req.agent_task,
+                max_new_tokens=req.max_new_tokens,
+                enable_critic=req.enable_critic,
+            )
 
-        answer = await asyncio.to_thread(_infer)
+        answer, trace = await asyncio.to_thread(_infer)
         latency_ms = (time.perf_counter() - t0) * 1000.0
-        return VlmAskResponse(answer=answer.strip(), latency_ms=latency_ms)
+        primary_agent = trace[0].agent if trace else ""
+        return VlmAskResponse(
+            answer=answer.strip(),
+            latency_ms=latency_ms,
+            backend=desired_backend(),
+            agent=primary_agent,
+            trace=[
+                {
+                    "agent": r.agent,
+                    "latency_ms": r.latency_ms,
+                    "error": r.error,
+                }
+                for r in trace
+            ],
+        )
     except Exception as e:
         log.exception("VLM inference failed")
-        return VlmAskResponse(error=str(e), latency_ms=(time.perf_counter() - t0) * 1000.0)
+        return VlmAskResponse(
+            error=str(e),
+            latency_ms=(time.perf_counter() - t0) * 1000.0,
+            backend=desired_backend(),
+        )
 
 
 # ----------------------------------------------------------------
@@ -443,17 +481,17 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--port", type=int, default=8766)
     parser.add_argument("--preload-yolo", action="store_true",
                         help="Eagerly load YOLO weights on startup")
     parser.add_argument("--preload-vlm", action="store_true",
-                        help="Eagerly load moondream2 on startup (slow first time)")
+                        help="Eagerly load the configured VLM backend on startup")
     args = parser.parse_args()
 
     if args.preload_yolo:
         get_yolo()
     if args.preload_vlm:
-        get_vlm()
+        get_vlm_engine()
 
     log.info(f"Starting server on {args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")

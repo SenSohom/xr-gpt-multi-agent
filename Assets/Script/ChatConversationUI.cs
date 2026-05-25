@@ -75,11 +75,11 @@ public class ChatConversationUI : MonoBehaviour
         if (voiceButton != null) voiceButton.onClick.AddListener(OnVoiceToggled);
         if (inputField  != null) inputField.onSubmit.AddListener(_ => OnSendClicked());
 
-        if (introChipButton)   introChipButton.onClick.AddListener(()   => SendChip(c => c.promptAskIntro,   "What is it?"));
-        if (useChipButton)     useChipButton.onClick.AddListener(()     => SendChip(c => c.promptAskUse,     "How to use?"));
-        if (whyChipButton)     whyChipButton.onClick.AddListener(()     => SendChip(c => c.promptAskWhy,     "How it works?"));
-        if (nextChipButton)    nextChipButton.onClick.AddListener(()    => SendChip(c => c.promptAskNext,    "Is it safe?"));
-        if (compareChipButton) compareChipButton.onClick.AddListener(() => SendChip(c => c.promptAskCompare, "Fun fact"));
+        if (introChipButton)   introChipButton.onClick.AddListener(()   => SendChip(c => c.promptAskIntro,   "What is it?", "intro"));
+        if (useChipButton)     useChipButton.onClick.AddListener(()     => SendChip(c => c.promptAskUse,     "How to use?", "use"));
+        if (whyChipButton)     whyChipButton.onClick.AddListener(()     => SendChip(c => c.promptAskWhy,     "How it works?", "why"));
+        if (nextChipButton)    nextChipButton.onClick.AddListener(()    => SendChip(c => c.promptAskNext,    "Is it safe?", "safety"));
+        if (compareChipButton) compareChipButton.onClick.AddListener(() => SendChip(c => c.promptAskCompare, "Fun fact", "compare"));
 
         if (voiceButton != null) voiceButton.gameObject.SetActive(enableVoiceInput);
     }
@@ -122,16 +122,16 @@ public class ChatConversationUI : MonoBehaviour
         if (string.IsNullOrEmpty(text)) return;
         inputField.text = "";
         // Use the user's raw text as both the display label and the VLM prompt
-        SendMessage(text, text);
+        SendMessage(text, text, "chat");
     }
 
-    private void SendChip(Func<VlmClient, string> getPrompt, string displayLabel)
+    private void SendChip(Func<VlmClient, string> getPrompt, string displayLabel, string agentTask)
     {
         string prompt = vlmClient != null ? getPrompt(vlmClient) : displayLabel;
-        SendMessage(displayLabel, prompt);
+        SendMessage(displayLabel, prompt, agentTask);
     }
 
-    private void SendMessage(string displayText, string vlmPrompt)
+    private void SendMessage(string displayText, string vlmPrompt, string agentTask)
     {
         AppendBubble("user", displayText);
         var thinkingBubble = AppendBubble("ai", "Thinking…");
@@ -140,7 +140,7 @@ public class ChatConversationUI : MonoBehaviour
 
         if (vlmClient != null && frozenSnapshot != null)
         {
-            vlmClient.Ask(frozenSnapshot, currentData?.label ?? "", fullPrompt, (answer, ok) =>
+            vlmClient.AskAgent(frozenSnapshot, currentData?.label ?? "", fullPrompt, agentTask, true, (answer, ok) =>
             {
                 string reply = ok ? answer
                                   : "AI server unavailable — make sure the server is running.";
@@ -362,7 +362,7 @@ public class ChatConversationUI : MonoBehaviour
                 if (!string.IsNullOrEmpty(transcript))
                 {
                     // Auto-send the recognised question — typing in VR is painful.
-                    SendMessage(transcript, transcript);
+                    SendMessage(transcript, transcript, "chat");
                 }
                 else
                 {

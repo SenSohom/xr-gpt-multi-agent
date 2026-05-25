@@ -369,7 +369,7 @@ public class MRHUDController : MonoBehaviour
         // 触发 VLM short description(只在第一次选中此物体时跑)
         if (vlmClient != null && data.snapshot != null && string.IsNullOrEmpty(data.vlmShortDescription))
         {
-            vlmClient.Ask(data.snapshot, data.label, vlmClient.promptDescribe, (answer, ok) =>
+            vlmClient.AskAgent(data.snapshot, data.label, vlmClient.promptDescribe, "describe", false, (answer, ok) =>
             {
                 if (ok)
                 {

@@ -40,6 +40,10 @@ if not exist "%HF_HOME%" mkdir "%HF_HOME%"
 REM Preload BOTH YOLO and VLM. moondream2 is ~3.5 GB on first download;
 REM if we don't preload, the very first /vlm/ask call will hang for minutes
 REM while transformers downloads weights, which makes the Quest UI look frozen.
+REM VLM backend: fastvlm is the new default. Set VRXR_VLM_BACKEND=moondream
+REM before launching if you need the old centralized model path.
+if "%VRXR_VLM_BACKEND%"=="" set "VRXR_VLM_BACKEND=fastvlm"
+
 python server.py --host 0.0.0.0 --port 8766 --preload-yolo --preload-vlm %*
 
 REM Pause on crash so the user can read the traceback instead of the window vanishing.
