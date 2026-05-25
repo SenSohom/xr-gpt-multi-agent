@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Tuple
@@ -13,6 +14,8 @@ class AgentSpec:
     name: str
     role_prompt: str
     max_new_tokens: int = 96
+    max_sentences: int = 1
+    max_words: int = 28
 
 
 @dataclass
@@ -27,67 +30,85 @@ AGENTS: Dict[str, AgentSpec] = {
     "describe": AgentSpec(
         name="describe",
         role_prompt=(
-            "You are the object description agent. Identify the selected object "
-            "from the image and answer in one concise sentence."
+            "You are the object label agent for a mixed-reality HUD. Return only "
+            "the object name or one short noun phrase. No explanation. No prefix."
         ),
-        max_new_tokens=64,
+        max_new_tokens=24,
+        max_sentences=1,
+        max_words=8,
     ),
     "detail": AgentSpec(
         name="detail",
         role_prompt=(
             "You are the detail agent. Explain what the selected object is and "
-            "what it is typically used for in 2-3 practical sentences."
+            "what it is typically used for. Answer in at most two short sentences."
         ),
-        max_new_tokens=128,
+        max_new_tokens=72,
+        max_sentences=2,
+        max_words=48,
     ),
     "usage": AgentSpec(
         name="usage",
         role_prompt=(
             "You are the usage agent. Give clear practical advice for using the "
-            "selected object. Keep the answer brief and actionable."
+            "selected object. Answer with one short actionable sentence."
         ),
-        max_new_tokens=128,
+        max_new_tokens=56,
+        max_sentences=1,
+        max_words=28,
     ),
     "mechanism": AgentSpec(
         name="mechanism",
         role_prompt=(
             "You are the mechanism agent. Explain simply how the selected object "
-            "works or why it functions the way it does."
+            "works or why it functions the way it does. Use one short sentence."
         ),
-        max_new_tokens=96,
+        max_new_tokens=56,
+        max_sentences=1,
+        max_words=30,
     ),
     "safety": AgentSpec(
         name="safety",
         role_prompt=(
             "You are the safety agent. Look for obvious handling risks, hazards, "
-            "or precautions for the selected object. If none are visible, say so."
+            "or precautions for the selected object. If the risk is trivial or "
+            "none is visible, answer exactly: No obvious safety concern."
         ),
-        max_new_tokens=96,
+        max_new_tokens=48,
+        max_sentences=1,
+        max_words=24,
     ),
     "compare": AgentSpec(
         name="compare",
         role_prompt=(
             "You are the comparison agent. Compare the selected object with one "
-            "similar item or share one useful distinguishing fact."
+            "similar item or share one useful distinguishing fact. Use one sentence."
         ),
-        max_new_tokens=96,
+        max_new_tokens=56,
+        max_sentences=1,
+        max_words=32,
     ),
     "chat": AgentSpec(
         name="chat",
         role_prompt=(
             "You are the conversational visual assistant. Answer the user's "
-            "question using the image and the detected label as context."
+            "question using the image and the detected label as context. Keep it "
+            "brief enough for a headset UI."
         ),
-        max_new_tokens=160,
+        max_new_tokens=96,
+        max_sentences=2,
+        max_words=60,
     ),
     "critic": AgentSpec(
         name="critic",
         role_prompt=(
             "You are the critic agent. Review the previous answer for obvious "
             "visual contradictions, overclaiming, or missing safety caveats. "
-            "Return a corrected final answer, not commentary about the review."
+            "Return only the corrected final answer. Maximum one short sentence."
         ),
-        max_new_tokens=128,
+        max_new_tokens=48,
+        max_sentences=1,
+        max_words=28,
     ),
 }
 
@@ -251,7 +272,7 @@ class AgentRouter:
                     min(max_new_tokens, spec.max_new_tokens),
                 )
                 latency_ms = (time.perf_counter() - t0) * 1000.0
-                answer = raw_answer.strip()
+                answer = self._sanitize_answer(raw_answer, spec)
                 results.append(AgentResult(agent_name, answer, latency_ms))
             except Exception as e:
                 latency_ms = (time.perf_counter() - t0) * 1000.0
@@ -295,4 +316,80 @@ class AgentRouter:
         if previous_answer:
             parts.append(f"Previous agent answer: {previous_answer}")
         parts.append(f"User request: {user_prompt}")
+        parts.append(
+            f"Output limit: {spec.max_sentences} sentence(s), {spec.max_words} words max."
+        )
         return "\n".join(parts)
+
+    @staticmethod
+    def _sanitize_answer(text: str, spec: AgentSpec) -> str:
+        if not text:
+            return ""
+
+        cleaned = text.strip()
+        cleaned = cleaned.replace("\r", "\n")
+        cleaned = re.sub(r"\n+", "\n", cleaned)
+
+        # Keep the first useful line when the model starts a useful answer and
+        # then rambles. FastVLM can echo parts of the prompt, so drop those.
+        prompt_echo_prefixes = (
+            "you are ",
+            "detected label hint:",
+            "previous agent answer:",
+            "user request:",
+            "output limit:",
+            "return only",
+            "no explanation",
+            "no prefix",
+        )
+        lines = []
+        for line in cleaned.split("\n"):
+            line = line.strip(" -\t")
+            if not line:
+                continue
+            lowered_line = line.lower()
+            if any(lowered_line.startswith(prefix) for prefix in prompt_echo_prefixes):
+                continue
+            lines.append(line)
+        if lines:
+            cleaned = lines[0]
+
+        prefixes = (
+            "answer:",
+            "final answer:",
+            "object:",
+            "description:",
+            "the answer is",
+        )
+        lowered = cleaned.lower()
+        for prefix in prefixes:
+            if lowered.startswith(prefix):
+                cleaned = cleaned[len(prefix):].strip(" :.-")
+                lowered = cleaned.lower()
+                break
+
+        # Remove common refusal/meta tails that FastVLM can append after answering.
+        tail_markers = (
+            "i have examined",
+            "i encountered",
+            "i'm sorry",
+            "i am unable",
+            "since the question",
+            "this process involves",
+        )
+        lowered = cleaned.lower()
+        cut_points = [lowered.find(marker) for marker in tail_markers if lowered.find(marker) > 0]
+        if cut_points:
+            cleaned = cleaned[:min(cut_points)].strip(" .,\n")
+
+        sentences = re.split(r"(?<=[.!?])\s+", cleaned)
+        if spec.max_sentences > 0 and len(sentences) > spec.max_sentences:
+            cleaned = " ".join(sentences[: spec.max_sentences]).strip()
+
+        words = cleaned.split()
+        if spec.max_words > 0 and len(words) > spec.max_words:
+            cleaned = " ".join(words[: spec.max_words]).rstrip(" ,;:")
+            if spec.max_sentences != 0 and not cleaned.endswith((".", "!", "?")):
+                cleaned += "."
+
+        return cleaned.strip()
