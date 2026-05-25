@@ -9,6 +9,7 @@ pillow>=10.0
 ultralytics>=8.1            # YOLOv8
 transformers>=4.44,<5.0     # FastVLM remote-code model loader
 einops>=0.7
+timm>=0.9
 accelerate>=0.27
 sentencepiece>=0.1.99
 huggingface_hub>=0.20
