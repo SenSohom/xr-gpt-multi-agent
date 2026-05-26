@@ -125,6 +125,28 @@ AGENTS: Dict[str, AgentSpec] = {
         max_sentences=2,
         max_words=48,
     ),
+    "mmstar": AgentSpec(
+        name="mmstar",
+        role_prompt=(
+            "You are a visual multiple-choice benchmark agent. Use the image and "
+            "question to choose the best option. Return only one letter: A, B, C, "
+            "D, or E. No explanation."
+        ),
+        max_new_tokens=12,
+        max_sentences=1,
+        max_words=3,
+    ),
+    "mmstar_synthesizer": AgentSpec(
+        name="mmstar_synthesizer",
+        role_prompt=(
+            "You are a voting synthesizer for a visual multiple-choice benchmark. "
+            "Use the agent observations to choose the best option. Return only one "
+            "letter: A, B, C, D, or E. No explanation."
+        ),
+        max_new_tokens=12,
+        max_sentences=1,
+        max_words=3,
+    ),
 }
 
 
@@ -140,6 +162,8 @@ COMMUNICATION_MATRIX: Dict[str, List[str]] = {
     "chat": ["describe", "usage"],
     "critic": [],
     "synthesizer": [],
+    "mmstar": ["describe", "detail"],
+    "mmstar_synthesizer": [],
 }
 
 
@@ -157,6 +181,7 @@ TASK_TO_AGENT = {
     "compare": "compare",
     "fun_fact": "compare",
     "chat": "chat",
+    "mmstar": "mmstar",
 }
 
 
@@ -285,8 +310,13 @@ class AgentRouter:
 
         answer = primary_answer
         if peer_answers:
+            synthesis_agent = (
+                "mmstar_synthesizer"
+                if primary_agent == "mmstar"
+                else "synthesizer"
+            )
             answer = self._run_agent(
-                agent_name="synthesizer",
+                agent_name=synthesis_agent,
                 stage="synthesis",
                 image=image,
                 label=label,
